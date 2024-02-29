@@ -5,6 +5,7 @@ using Lagrange.Core.Internal.Event.Notify;
 using Lagrange.Core.Internal.Packets.Message;
 using Lagrange.Core.Internal.Packets.Message.Notify;
 using Lagrange.Core.Message;
+using Lagrange.Core.Utility.Binary;
 using Lagrange.Core.Utility.Extension;
 using ProtoBuf;
 
@@ -21,96 +22,98 @@ internal class PushMessageService : BaseService<PushMessageEvent>
     {
         var message = Serializer.Deserialize<PushMsg>(input.AsSpan());
         var packetType = (PkgType)message.Message.ContentHead.Type;
-
+        
         output = null!;
         extraEvents = new List<ProtocolEvent>();
         switch (packetType)
         {
-            case PkgType.PrivateMessage or PkgType.GroupMessage or PkgType.TempMessage:
-                {
-                    var chain = MessagePacker.Parse(message.Message);
-                    output = PushMessageEvent.Create(chain, packetType);
-                    break;
-                }
+            case PkgType.PrivateMessage or PkgType.GroupMessage or PkgType.TempMessage or PkgType.PrivateRecordMessage:
+            {
+                var chain = MessagePacker.Parse(message.Message);
+                output = PushMessageEvent.Create(chain);
+                break;
+            }
             case PkgType.PrivateFileMessage:
-                {
-                    var chain = MessagePacker.ParsePrivateFile(message.Message);
-                    output = PushMessageEvent.Create(chain, packetType);
-                    break;
-                }
-            case PkgType.PrivateRecordMessage:
-                {
-                    var chain = MessagePacker.Parse(message.Message);
-                    output = PushMessageEvent.Create(chain, packetType);
-                    break;
-                }
+            {
+                var chain = MessagePacker.ParsePrivateFile(message.Message);
+                output = PushMessageEvent.Create(chain);
+                break;
+            }
             case PkgType.GroupRequestJoinNotice when message.Message.Body?.MsgContent is { } content:
-                {
-                    break;
-                }
+            {
+                var join = Serializer.Deserialize<GroupJoin>(content.AsSpan());
+                var joinEvent = GroupSysRequestJoinEvent.Result(join.GroupUin, join.TargetUid);
+                extraEvents.Add(joinEvent);
+                break;
+            }
             case PkgType.GroupRequestInvitationNotice when message.Message.Body?.MsgContent is { } content:
-                {
-
-                    break;
-                }
+            {
+                var invitation = Serializer.Deserialize<GroupInvitation>(content.AsSpan());
+                if (invitation == null) break;
+                
+                var info = invitation.Info;
+                var invitationEvent = GroupSysRequestInvitationEvent.Result(info.GroupUin, info.TargetUid, info.InvitorUid);
+                extraEvents.Add(invitationEvent);
+                break;
+            }
             case PkgType.GroupInviteNotice when message.Message.Body?.MsgContent is { } content:
-                {
-                    var invite = Serializer.Deserialize<GroupInvite>(content.AsSpan());
-                    var inviteEvent = GroupSysInviteEvent.Result(invite.GroupUin, invite.InvitorUid);
-                    extraEvents.Add(inviteEvent);
-                    break;
-                }
+            {
+                var invite = Serializer.Deserialize<GroupInvite>(content.AsSpan());
+                var inviteEvent = GroupSysInviteEvent.Result(invite.GroupUin, invite.InvitorUid);
+                extraEvents.Add(inviteEvent);
+                break;
+            }
             case PkgType.GroupAdminChangedNotice when message.Message.Body?.MsgContent is { } content:
+            {
+                var admin = Serializer.Deserialize<GroupAdmin>(content.AsSpan());
+                bool enabled; string uid;
+                if (admin.Body.ExtraEnable != null)
                 {
-                    var admin = Serializer.Deserialize<GroupAdmin>(content.AsSpan());
-                    bool enabled; string uid;
-                    if (admin.Body.ExtraEnable != null)
-                    {
-                        enabled = true;
-                        uid = admin.Body.ExtraEnable.AdminUid;
-                    }
-                    else if (admin.Body.ExtraDisable != null)
-                    {
-                        enabled = false;
-                        uid = admin.Body.ExtraDisable.AdminUid;
-                    }
-                    else
-                    {
-                        return false;
-                    }
-
-                    extraEvents.Add(GroupSysAdminEvent.Result(admin.GroupUin, uid, enabled));
-                    break;
+                    enabled = true;
+                    uid = admin.Body.ExtraEnable.AdminUid;
                 }
+                else if (admin.Body.ExtraDisable != null)
+                {
+                    enabled = false;
+                    uid = admin.Body.ExtraDisable.AdminUid;
+                }
+                else
+                {
+                    return false;
+                }
+                
+                extraEvents.Add(GroupSysAdminEvent.Result(admin.GroupUin, uid, enabled));
+                break;
+            }
             case PkgType.GroupMemberIncreaseNotice when message.Message.Body?.MsgContent is { } content:
-                {
-                    var increase = Serializer.Deserialize<GroupChange>(content.AsSpan());
-                    var increaseEvent = GroupSysIncreaseEvent.Result(increase.GroupUin, increase.MemberUid, increase.OperatorUid, increase.IncreaseType);
-                    extraEvents.Add(increaseEvent);
-                    break;
-                }
+            {
+                var increase = Serializer.Deserialize<GroupChange>(content.AsSpan());
+                var increaseEvent = GroupSysIncreaseEvent.Result(increase.GroupUin, increase.MemberUid, increase.OperatorUid, increase.IncreaseType);
+                extraEvents.Add(increaseEvent);
+                break;
+            }
             case PkgType.GroupMemberDecreaseNotice when message.Message.Body?.MsgContent is { } content:
-                {
-                    var decrease = Serializer.Deserialize<GroupChange>(content.AsSpan());
-                    var decreaseEvent = GroupSysDecreaseEvent.Result(decrease.GroupUin, decrease.MemberUid, decrease.OperatorUid, decrease.DecreaseType);
-                    extraEvents.Add(decreaseEvent);
-                    break;
-                }
+            {
+                var decrease = Serializer.Deserialize<GroupChange>(content.AsSpan());
+                var decreaseEvent = GroupSysDecreaseEvent.Result(decrease.GroupUin, decrease.MemberUid, decrease.OperatorUid, decrease.DecreaseType);
+                extraEvents.Add(decreaseEvent);
+                break;
+            }
             case PkgType.Event0x210:
-                {
-                    ProcessEvent0x210(input, message, extraEvents);
-                    break;
-                }
+            {
+                ProcessEvent0x210(input, message, extraEvents);
+                break;
+            }
             case PkgType.Event0x2DC:
-                {
-                    ProcessEvent0x2DC(input, message, extraEvents);
-                    break;
-                }
+            {
+                ProcessEvent0x2DC(input, message, extraEvents);
+                break;
+            }
             default:
-                {
-                    Console.WriteLine($"Unknown message type: {packetType}: {input.Hex()}");
-                    break;
-                }
+            {
+                Console.WriteLine($"Unknown message type: {packetType}: {input.Hex()}");
+                break;
+            }
         }
         return true;
     }
@@ -121,31 +124,37 @@ internal class PushMessageService : BaseService<PushMessageEvent>
         switch (pkgType)
         {
             case Event0x2DCSubType.GroupRecallNotice when msg.Message.Body?.MsgContent is { } content:
-                {
-                    var subInfo = content[7..];
-                    Console.WriteLine(subInfo.Hex());
-                    break;
-                }
+            {
+                var packet = new BinaryPacket(content);
+                _ = packet.ReadUint(false);  // group uin
+                _ = packet.ReadByte();  // unknown byte
+                var proto = packet.ReadBytes(BinaryPacket.Prefix.Uint16 | BinaryPacket.Prefix.LengthOnly);
+                var recall = Serializer.Deserialize<NotifyMessageBody>(proto.AsSpan());
+                var meta = recall.Recall.RecallMessages[0];
+                var groupRecallEvent = GroupSysRecallEvent.Result(recall.GroupUin, meta.AuthorUid, recall.Recall.OperatorUid, meta.Sequence, meta.Time, meta.Random);
+                extraEvents.Add(groupRecallEvent);
+                break;
+            }
             case Event0x2DCSubType.GroupMuteNotice when msg.Message.Body?.MsgContent is { } content:
+            {
+                var mute = Serializer.Deserialize<GroupMute>(content.AsSpan());
+                if (mute.Data.State.TargetUid == null)
                 {
-                    var mute = Serializer.Deserialize<GroupMute>(content.AsSpan());
-                    if (mute.Data.State.TargetUid == null)
-                    {
-                        var groupMuteEvent = GroupSysMuteEvent.Result(mute.GroupUin, mute.OperatorUid, mute.Data.State.Duration == uint.MaxValue);
-                        extraEvents.Add(groupMuteEvent);
-                    }
-                    else
-                    {
-                        var memberMuteEvent = GroupSysMemberMuteEvent.Result(mute.GroupUin, mute.OperatorUid, mute.Data.State.TargetUid, mute.Data.State.Duration);
-                        extraEvents.Add(memberMuteEvent);
-                    }
-                    break;
+                    var groupMuteEvent = GroupSysMuteEvent.Result(mute.GroupUin, mute.OperatorUid, mute.Data.State.Duration == uint.MaxValue);
+                    extraEvents.Add(groupMuteEvent);
                 }
+                else
+                {
+                    var memberMuteEvent = GroupSysMemberMuteEvent.Result(mute.GroupUin, mute.OperatorUid, mute.Data.State.TargetUid, mute.Data.State.Duration);
+                    extraEvents.Add(memberMuteEvent);
+                }
+                break;
+            }
             default:
-                {
-                    Console.WriteLine($"Unknown Event0x2DC message type: {pkgType}: {payload.Hex()}");
-                    break;
-                }
+            {
+                Console.WriteLine($"Unknown Event0x2DC message type: {pkgType}: {payload.Hex()}");
+                break;
+            }
         }
     }
 
@@ -155,37 +164,43 @@ internal class PushMessageService : BaseService<PushMessageEvent>
         switch (pkgType)
         {
             case Event0x210SubType.FriendRequestNotice when msg.Message.Body?.MsgContent is { } content:
-                {
-                    var friend = Serializer.Deserialize<FriendRequest>(content.AsSpan());
-                    var friendEvent = FriendSysRequestEvent.Result(msg.Message.ResponseHead.FromUin, friend.Info.SourceUid, friend.Info.Message, friend.Info.Name);
-                    extraEvents.Add(friendEvent);
-                    break;
-                }
+            {
+                var request = Serializer.Deserialize<FriendRequest>(content.AsSpan());
+                var friendEvent = FriendSysRequestEvent.Result(msg.Message.ResponseHead.FromUin, request.Info.SourceUid, request.Info.Message, request.Info.Name);
+                extraEvents.Add(friendEvent);
+                break;
+            }
+            case Event0x210SubType.FriendRecallNotice when msg.Message.Body?.MsgContent is { } content:
+            {
+                var recall = Serializer.Deserialize<FriendRecall>(content.AsSpan());
+                var recallEvent = FriendSysRecallEvent.Result(recall.Info.FromUid, recall.Info.Sequence, recall.Info.Time, recall.Info.Random);
+                extraEvents.Add(recallEvent);
+                break;
+            }
             default:
-                {
-                    Console.WriteLine($"Unknown Event0x210 message type: {pkgType}: {payload.Hex()}");
-                    break;
-                }
+            {
+                Console.WriteLine($"Unknown Event0x210 message type: {pkgType}: {payload.Hex()}");
+                break;
+            }
         }
     }
-
-    public enum PkgType
+    
+    private enum PkgType
     {
         PrivateMessage = 166,
         GroupMessage = 82,
-
         TempMessage = 141,
-
-        Event0x210 = 528,
-        Event0x2DC = 732,
-
+        
+        Event0x210 = 528,  // friend related event
+        Event0x2DC = 732,  // group related event
+        
         PrivateRecordMessage = 208,
         PrivateFileMessage = 529,
-
+        
         GroupRequestInvitationNotice = 525, // from group member invitation
         GroupRequestJoinNotice = 84, // directly entered
-        GroupInviteNotice = 87,
-        GroupAdminChangedNotice = 44,
+        GroupInviteNotice = 87,  // the bot self is being invited
+        GroupAdminChangedNotice = 44,  // admin change, both on and off
         GroupMemberIncreaseNotice = 33,
         GroupMemberDecreaseNotice = 34,
     }
@@ -195,10 +210,11 @@ internal class PushMessageService : BaseService<PushMessageEvent>
         GroupRecallNotice = 17,
         GroupMuteNotice = 12
     }
-
+    
     private enum Event0x210SubType
     {
-        Friend = 138,
+        FriendRecallNotice = 138,
         FriendRequestNotice = 226,
+        FriendPokeNotice = 290,
     }
 }

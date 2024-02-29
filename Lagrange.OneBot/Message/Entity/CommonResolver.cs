@@ -13,7 +13,7 @@ public static class CommonResolver
                 
         if (url.StartsWith("file"))
         {
-            string path = new Uri(url).LocalPath;
+            string path = Path.GetFullPath(url.Replace("file://", ""));
             return File.ReadAllBytes(path);
         }
                 
@@ -21,6 +21,28 @@ public static class CommonResolver
         {
             string base64 = url.Replace("base64://", "");
             return Convert.FromBase64String(base64);
+        }
+
+        return null;
+    }
+
+    public static Stream? ResolveStream(string url)
+    {
+        if (url.StartsWith("http"))
+        {
+            return Client.GetAsync(url).Result.Content.ReadAsStreamAsync().Result;
+        }
+                
+        if (url.StartsWith("file"))
+        {
+            string path = Path.GetFullPath(url.Replace("file://", ""));
+            return new FileStream(path, FileMode.Open);
+        }
+                
+        if (url.StartsWith("base64"))
+        {
+            string base64 = url.Replace("base64://", "");
+            return new MemoryStream(Convert.FromBase64String(base64));
         }
 
         return null;

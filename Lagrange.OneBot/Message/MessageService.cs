@@ -25,10 +25,9 @@ public sealed class MessageService
     private readonly LiteDatabase _context;
     private readonly IConfiguration _config;
     private readonly Dictionary<Type, List<(string Type, SegmentBase Factory)>> _entityToFactory;
-
+    
     private static readonly JsonSerializerOptions Options;
-
-
+    
     static MessageService()
     {
         Options = new JsonSerializerOptions { TypeInfoResolver = new DefaultJsonTypeInfoResolver { Modifiers = { ModifyTypeInfo } } };
@@ -45,7 +44,7 @@ public sealed class MessageService
         invoker.OnFriendMessageReceived += OnFriendMessageReceived;
         invoker.OnGroupMessageReceived += OnGroupMessageReceived;
         invoker.OnTempMessageReceived += OnTempMessageReceived;
-
+        
         _entityToFactory = new Dictionary<Type, List<(string, SegmentBase)>>();
         foreach (var type in Assembly.GetExecutingAssembly().GetTypes())
         {
@@ -66,39 +65,51 @@ public sealed class MessageService
         var record = (MessageRecord)e.Chain;
         _context.GetCollection<MessageRecord>().Insert(new BsonValue(record.MessageHash), record);
 
-        var segments = Convert(e.Chain);
-        var request = new OneBotPrivateMsg(bot.BotUin, new OneBotSender(e.Chain.FriendUin, e.Chain.FriendInfo?.Nickname ?? string.Empty))
+        var request = ConvertToPrivateMsg(bot.BotUin, e.Chain, record.MessageHash);
+
+        _ = _service.SendJsonAsync(request);
+    }
+
+    public OneBotPrivateMsg ConvertToPrivateMsg(uint uin, MessageChain chain, int hash)
+    {
+        var segments = Convert(chain);
+        var request = new OneBotPrivateMsg(uin, new OneBotSender(chain.FriendUin, chain.FriendInfo?.Nickname ?? string.Empty), "friend")
         {
-            MessageId = record.MessageHash,
-            UserId = e.Chain.FriendUin,
+            MessageId = hash,
+            UserId = chain.FriendUin,
             Message = segments,
             RawMessage = ToRawMessage(segments)
         };
-
-        _ = _service.SendJsonAsync(request);
+        return request;
     }
 
     private void OnGroupMessageReceived(BotContext bot, GroupMessageEvent e)
     {
         var record = (MessageRecord)e.Chain;
         _context.GetCollection<MessageRecord>().Insert(new BsonValue(record.MessageHash), record);
-
+        
         if (_config.GetValue<bool>("Message:IgnoreSelf") && e.Chain.FriendUin == bot.BotUin) return; // ignore self message
 
-        var segments = Convert(e.Chain);
-        var request = new OneBotGroupMsg(bot.BotUin, e.Chain.GroupUin ?? 0, segments, ToRawMessage(segments),
-            e.Chain.GroupMemberInfo ?? throw new Exception("Group member not found"), record.MessageHash);
+        var request = ConvertToGroupMsg(bot.BotUin, e.Chain, record.MessageHash);
 
         _ = _service.SendJsonAsync(request);
+    }
+
+    public OneBotGroupMsg ConvertToGroupMsg(uint uin, MessageChain chain, int hash)
+    {
+        var segments = Convert(chain);
+        var request = new OneBotGroupMsg(uin, chain.GroupUin ?? 0, segments, ToRawMessage(segments),
+            chain.GroupMemberInfo ?? throw new Exception("Group member not found"), hash);
+        return request;
     }
 
     private void OnTempMessageReceived(BotContext bot, TempMessageEvent e)
     {
         var record = (MessageRecord)e.Chain;
         _context.GetCollection<MessageRecord>().Insert(new BsonValue(record.MessageHash), record);
-
+        
         var segments = Convert(e.Chain);
-        var request = new OneBotPrivateMsg(bot.BotUin, new OneBotSender(e.Chain.FriendUin, e.Chain.FriendInfo?.Nickname ?? string.Empty))
+        var request = new OneBotPrivateMsg(bot.BotUin, new OneBotSender(e.Chain.FriendUin, e.Chain.FriendInfo?.Nickname ?? string.Empty), "group")
         {
             MessageId = record.MessageHash,
             UserId = e.Chain.FriendUin,
@@ -159,7 +170,7 @@ public sealed class MessageService
         }
         return rawMessageBuilder.ToString();
     }
-
+    
     private static void ModifyTypeInfo(JsonTypeInfo ti)
     {
         if (ti.Kind != JsonTypeInfoKind.Object) return;

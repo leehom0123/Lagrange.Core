@@ -1,4 +1,5 @@
 using Lagrange.Core.Common.Entity;
+using Lagrange.Core.Event.EventArg;
 
 namespace Lagrange.Core.Common.Interface.Api;
 
@@ -51,11 +52,14 @@ public static class GroupExt
     public static Task<bool> LeaveGroup(this BotContext bot, uint groupUin)
         => bot.ContextCollection.Business.OperationLogic.LeaveGroup(groupUin);
 
-    public static Task<bool> InviteGroup(this BotContext bot, uint groupUin, List<uint> invitedUins)
+    public static Task<bool> InviteGroup(this BotContext bot, uint groupUin, Dictionary<uint, uint?> invitedUins)
         => bot.ContextCollection.Business.OperationLogic.InviteGroup(groupUin, invitedUins);
     
-    public static Task<bool> GroupInvitationRequest(this BotContext bot, BotGroupRequest request, bool accept = true)
-        => bot.ContextCollection.Business.OperationLogic.GroupInvitationRequest(request.GroupUin, request.Sequence, accept);
+    public static Task<bool> SetGroupRequest(this BotContext bot, BotGroupRequest request, bool accept = true)
+        => bot.ContextCollection.Business.OperationLogic.SetGroupRequest(request.GroupUin, request.Sequence, (uint)request.EventType, accept);
+    
+    public static Task<bool> SetFriendRequest(this BotContext bot, FriendRequestEvent request, bool accept = true)
+        => bot.ContextCollection.Business.OperationLogic.SetFriendRequest(request.SourceUid, accept);
 
     #region Group File System
 

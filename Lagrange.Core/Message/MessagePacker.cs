@@ -1,5 +1,6 @@
 using ProtoBuf;
 using System.Reflection;
+using Lagrange.Core.Common.Entity;
 using Lagrange.Core.Message.Entity;
 using Lagrange.Core.Utility.Extension;
 using Lagrange.Core.Utility.Generator;
@@ -73,6 +74,8 @@ internal static class MessagePacker
                 message.Body.MsgContent = stream.ToArray();
             }
         }
+        
+        BuildAdditional(chain, message);
 
         return message;
     }
@@ -100,10 +103,28 @@ internal static class MessagePacker
 
         return message;
     }
-    
-    public static MessageChain Parse(PushMsgBody message)
+
+    private static void BuildAdditional(MessageChain chain, Internal.Packets.Message.Message message)
     {
-        var chain = ParseChain(message);
+        if (message.Body?.RichText == null) return;
+        
+        foreach (var entity in chain)
+        {
+            switch (entity)
+            {
+                case RecordEntity { Compat: { } compat }:  // Append Tag 04 -> Ptt
+                {
+                    message.Body.RichText.Ptt = compat.Ptt;
+                    message.Body.RichText.Elems.AddRange(compat.Elems);
+                    break;
+                }
+            }
+        }
+    }
+    
+    public static MessageChain Parse(PushMsgBody message, bool isFake = false)
+    {
+        var chain = isFake ? ParseFakeChain(message) : ParseChain(message);
 
         if (message.Body?.RichText is { Elems: { } elements}) // 怎么Body还能是null的
         {
@@ -124,9 +145,14 @@ internal static class MessagePacker
             }
         }
 
-        if (message.Body?.RichText?.Ptt is { } ptt && !chain.IsGroup)
+        switch (message.Body?.RichText?.Ptt)
         {
-            chain.Add(new RecordEntity(ptt.FileUuid, ptt.FileName));
+            case { } ptt when !chain.IsGroup:
+                chain.Add(new RecordEntity(ptt.FileUuid, ptt.FileName));
+                break;
+            case { } groupPtt when chain.IsGroup && groupPtt.FileId == 0:  //  for legacy ptt
+                chain.Add(new RecordEntity(groupPtt.GroupFileKey, groupPtt.FileName));
+                break;
         }
 
         return chain;
@@ -226,7 +252,8 @@ internal static class MessagePacker
                 message.ResponseHead.ToUid ?? string.Empty , 
                 message.ResponseHead.FromUid ?? string.Empty, 
                 message.ContentHead.Sequence ?? 0,
-                message.ContentHead.NewId ?? 0)
+                message.ContentHead.NewId ?? 0,
+                message.ContentHead.Type == 141 ? MessageChain.MessageType.Temp : MessageChain.MessageType.Friend)
             
             : new MessageChain(
                 message.ResponseHead.Grp.GroupUin, 
@@ -240,4 +267,26 @@ internal static class MessagePacker
         
         return chain;
     }
+
+    private static MessageChain ParseFakeChain(PushMsgBody message)
+    {
+        var @base = ParseChain(message);
+
+        if (@base.IsGroup && message.ResponseHead.Grp != null)
+        {
+            @base.GroupMemberInfo = new BotGroupMember
+            {
+                MemberCard = message.ResponseHead.Grp.MemberName,
+                MemberName = message.ResponseHead.Grp.MemberName,
+                Uid = message.ResponseHead.FromUid ?? string.Empty
+            };
+        }
+        else
+        {
+            @base.FriendInfo = new BotFriend(0, message.ResponseHead.FromUid ?? string.Empty, message.ResponseHead.Forward?.FriendName ?? string.Empty, string.Empty, string.Empty);
+        }
+        
+        return @base;
+    }
+
 }
